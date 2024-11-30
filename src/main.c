@@ -10,73 +10,71 @@
 #define SLEEP_TIME_MS 1000
 
 #define SW0_NODE DT_ALIAS(sw0)
-#if !DT_NODE_HAS_STATUS(SW0_NODE, okay)
-#error "Placa não suportada: alias sw0 do devicetree não está definido"
-#endif
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios, {0});
 static struct gpio_callback button_cb_data;
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios, {0});
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led1), gpios, {0});
 
-int mutex1 = -1;
-int mutex2 = -1;
 K_MUTEX_DEFINE(my_mutex1);
 K_MUTEX_DEFINE(my_mutex2);
 
+/* pisca o led0, chamada pelo timer em blink0 */
 void blink_led(struct k_timer *timer_id) {
     static bool led_state = false;
 
     if (gpio_is_ready_dt(&led0)) {
-        gpio_pin_toggle_dt(&led0);
-        led_state = !led_state;
-        if (led_state == true) {
+        gpio_pin_toggle_dt(&led0); //inverte o estado atual do led, fazendo-o piscar
+        led_state = !led_state; //acompanha o estado do led, como uma variavel booleana
+        if (led_state == true) { //se o led estiver ligado
             printk("LED0 ligado e mutex travado\n");
-            mutex1 = k_mutex_lock(&my_mutex1, K_FOREVER);
-        } else {
+            k_mutex_lock(&my_mutex1, K_FOREVER); 
+        } else { //se o led estiver desligado
             printk("LED0 desligado e mutex destravado\n");
-            mutex1 = k_mutex_unlock(&my_mutex1);
-        }   
+            k_mutex_unlock(&my_mutex1); 
+        }
         printk("LED0 alternado; estado=%s\n", led_state ? "ON" : "OFF");
     }
 }
 
 K_TIMER_DEFINE(blink_timer, blink_led, NULL);
 
+/* funcao chamada pela thread1, verifica erros e inicializa a funcao periodica*/
 void blink0(void) {
     int ret;
 
-    if (!gpio_is_ready_dt(led)) {
-        printk("Erro: dispositivo %s não está pronto\n", led->port->name);
+    if (!gpio_is_ready_dt(&led0)) {
+        printk("Erro: dispositivo %s não está pronto\n", led0.port->name);
         return;
     }
 
-    ret = gpio_pin_configure_dt(led, GPIO_OUTPUT_ACTIVE);
+    ret = gpio_pin_configure_dt(&led0, GPIO_OUTPUT_ACTIVE);
     if (ret < 0) {
         printk("Erro: Falha ao configurar o pino do LED\n");
         return;
     }
 
-    k_timer_start(&blink_timer, K_NO_WAIT, K_MSEC(TIMER_INTERVAL_MS));
+    k_timer_start(&blink_timer, K_NO_WAIT, K_MSEC(SLEEP_TIME_MS));
 }
 
 volatile bool led1_state = false;  // Variável para armazenar o estado do LED1
 
+/* Liga o led1 quando o botao é ativado, pegando o mutex2 */
 void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
     printk("Botão pressionado em %" PRIu32 "\n", k_cycle_get_32());
 
-    // Alternar o estado do LED1
-    led1_state = !led1_state;
-    if (led1_state == true) {
+    led1_state = !led1_state; // Alternar o estado do LED1
+    if (led1_state == true) { // Se o LED1 estiver ligado
         printk("LED1 ligado e mutex travado\n");
-        mutex2 = k_mutex_lock(&my_mutex2, K_FOREVER);
-    } else {
+        k_mutex_lock(&my_mutex2, K_FOREVER); 
+    } else { // Se o LED1 estiver desligado
         printk("LED1 desligado e mutex destravado\n");
-        mutex2 = k_mutex_unlock(&my_mutex2);
+        k_mutex_unlock(&my_mutex2); 
     }
-    gpio_pin_set_dt(&led1, led1_state);
+    gpio_pin_set_dt(&led1, led1_state); // Atualiza o estado do LED1, de acordo com a variável led1_state
 }
 
+/* verifica todos os possiveis erros e inicializa/registra o callback */
 void button(void) {
     int ret1;
 
@@ -101,7 +99,6 @@ void button(void) {
     gpio_add_callback(button.port, &button_cb_data);
     printk("Configuração do botão em %s pino %d\n", button.port->name, button.pin);
 
-    // Configurar o LED1
     if (!gpio_is_ready_dt(&led1)) {
         printk("Erro: dispositivo LED1 %s não está pronto\n", led1.port->name);
         return;
@@ -114,12 +111,17 @@ void button(void) {
     }
 }
 
+/* quando ambos os mutex estsao travados. Nao pensei em uma funcao especifica, usei apenas para mostrar
+o estado dos mutex */
 void terceira(){
-    if (mutex1 == 0 && mutex2 == 0){
-        printk("Ambos Travados\n");
-    }
-    else{
-        printk("NAO ESTAO ambos travados\n");
+    while(1){
+        if (k_mutex_lock(&my_mutex1, K_MSEC(100)) == 0 && k_mutex_lock(&my_mutex2, K_MSEC(100)) == 0){
+            printk("Ambos Travados\n");
+        }
+        else{
+            printk("NAO ESTAO ambos travados\n");
+        }
+        k_msleep(SLEEP_TIME_MS);
     }
 }
 
